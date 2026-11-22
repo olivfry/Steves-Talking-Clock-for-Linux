@@ -125,6 +125,13 @@ def _lock_path():
     return os.path.join(base, "steves-clock.lock")
 
 
+# raw.githubusercontent.com is cached for minutes, so a release published a
+# moment ago still reads as the previous version there. The API is current, so
+# it is asked first and the raw file is only a fallback.
+UPDATE_VERSION_API = os.environ.get(
+    "STEVES_CLOCK_UPDATE_VERSION_API",
+    "https://api.github.com/repos/olivfry/Steves-Talking-Clock-for-Linux/contents/stevesclock/__init__.py",
+)
 UPDATE_VERSION_URL = os.environ.get(
     "STEVES_CLOCK_UPDATE_VERSION_URL",
     "https://raw.githubusercontent.com/olivfry/Steves-Talking-Clock-for-Linux/main/stevesclock/__init__.py",
@@ -143,14 +150,35 @@ def _version_tuple(text):
     return tuple(parts)
 
 
+def _fetch_text(url, headers=None):
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "steves-clock/%s" % VERSION, **(headers or {})}
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return response.read().decode("utf-8", "replace")
+
+
+def _version_sources():
+    # A test or a mirror can pin the source; otherwise ask the API, then raw.
+    if os.environ.get("STEVES_CLOCK_UPDATE_VERSION_URL"):
+        return [(UPDATE_VERSION_URL, {})]
+    return [(UPDATE_VERSION_API, {"Accept": "application/vnd.github.raw"}), (UPDATE_VERSION_URL, {})]
+
+
 def _published_version():
     """The __version__ on the published branch, read straight from the repo."""
-    with urllib.request.urlopen(UPDATE_VERSION_URL, timeout=20) as response:
-        body = response.read().decode("utf-8", "replace")
-    match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', body)
-    if not match:
-        raise ValueError("no __version__ at %s" % UPDATE_VERSION_URL)
-    return match.group(1)
+    problems = []
+    for url, headers in _version_sources():
+        try:
+            body = _fetch_text(url, headers)
+        except Exception as error:
+            problems.append("%s (%s)" % (url, error))
+            continue
+        match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', body)
+        if match:
+            return match.group(1).strip()
+        problems.append("no __version__ at %s" % url)
+    raise ValueError("; ".join(problems))
 
 
 def _install_prefix():
