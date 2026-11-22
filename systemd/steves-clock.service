@@ -1,0 +1,14 @@
+[Unit]
+Description=Steve's Talking Clock
+Documentation=https://github.com/olivfry/Steves-Talking-Clock-for-the-Mac-
+# Sound is only available once the audio session exists.
+After=sound.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/steves-clock daemon
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,18 @@
+#!/bin/sh
+# Steve's Talking Clock - terminal menu.
+set -eu
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+if [ -f "$here/../lib/steves-clock/stevesclock/__init__.py" ]; then
+    root="$here/../lib/steves-clock"
+elif [ -f "$here/stevesclock/__init__.py" ]; then
+    root="$here"
+else
+    echo "steves-clock-tui: cannot find the stevesclock package next to $0" >&2
+    exit 1
+fi
+
+PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+exec python3 -m stevesclock.tui "$@"
