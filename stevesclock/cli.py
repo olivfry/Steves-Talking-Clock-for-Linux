@@ -9,9 +9,16 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import fcntl
 import os
+import re
 import shutil
+import subprocess
 import sys
+import tarfile
+import tempfile
+import urllib.request
+from pathlib import Path
 
 from . import __version__, audio, engine, packs, schedule, tts
 from .config import SLOT_LABELS, SLOTS, Config, format_clock, parse_clock
@@ -112,7 +119,131 @@ def cmd_say(config, args):
     return 0
 
 
+def _lock_path():
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    base = runtime if runtime and os.path.isdir(runtime) else tempfile.gettempdir()
+    return os.path.join(base, "steves-clock.lock")
+
+
+UPDATE_VERSION_URL = os.environ.get(
+    "STEVES_CLOCK_UPDATE_VERSION_URL",
+    "https://raw.githubusercontent.com/olivfry/Steves-Talking-Clock-for-Linux/main/stevesclock/__init__.py",
+)
+UPDATE_ARCHIVE_URL = os.environ.get(
+    "STEVES_CLOCK_UPDATE_ARCHIVE_URL",
+    "https://github.com/olivfry/Steves-Talking-Clock-for-Linux/archive/refs/heads/main.tar.gz",
+)
+
+
+def _version_tuple(text):
+    parts = []
+    for piece in str(text).strip().split("."):
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
+def _published_version():
+    """The __version__ on the published branch, read straight from the repo."""
+    with urllib.request.urlopen(UPDATE_VERSION_URL, timeout=20) as response:
+        body = response.read().decode("utf-8", "replace")
+    match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', body)
+    if not match:
+        raise ValueError("no __version__ at %s" % UPDATE_VERSION_URL)
+    return match.group(1)
+
+
+def _install_prefix():
+    """The prefix this copy was installed under, or None for a checkout."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "bin" / "steves-clock").exists():
+            return parent
+    return None
+
+
+def cmd_update(config, args):
+    """Check the repository and, unless --check, install the newer build."""
+    print("Installed: %s" % VERSION)
+    try:
+        latest = _published_version()
+    except Exception as error:  # offline, blocked, or the file moved
+        print("could not check for updates: %s" % error)
+        print("The installer is at %s" % UPDATE_ARCHIVE_URL)
+        return 1
+    print("Published: %s" % latest)
+
+    if _version_tuple(latest) <= _version_tuple(VERSION):
+        if latest == VERSION:
+            print("Already up to date.")
+        else:
+            print("This copy is newer than the published one.")
+        return 0
+
+    print("Update available: %s -> %s" % (VERSION, latest))
+    if getattr(args, "check", False):
+        print("Run 'steves-clock update' to install it.")
+        return 0
+
+    prefix = _install_prefix()
+    if prefix is None:
+        print("This copy runs from a source checkout, so update it there:")
+        print("  git pull && ./install.sh")
+        return 0
+
+    with tempfile.TemporaryDirectory() as work:
+        archive = os.path.join(work, "update.tar.gz")
+        print("Downloading %s" % UPDATE_ARCHIVE_URL)
+        urllib.request.urlretrieve(UPDATE_ARCHIVE_URL, archive)
+        with tarfile.open(archive) as tar:
+            try:
+                tar.extractall(work, filter="data")
+            except TypeError:  # older Python without the filter argument
+                tar.extractall(work)
+        roots = [
+            candidate
+            for candidate in Path(work).iterdir()
+            if candidate.is_dir() and (candidate / "install.sh").exists()
+        ]
+        if not roots:
+            print("the archive had no install.sh - nothing was changed")
+            return 1
+        command = ["bash", str(roots[0] / "install.sh"), "--yes", "--prefix", str(prefix)]
+        if (prefix / "bin" / ("steves-clock-gui")).exists():
+            command.append("--all")
+        print("Installing %s into %s" % (latest, prefix))
+        code = subprocess.call(command)
+        if code != 0:
+            print("the installer exited %d; the previous version is still installed" % code)
+            return code
+
+    print("Updated to %s." % latest)
+    print("The installer restarted the service where systemd is available.")
+    print("Reopen the window to pick up the new code.")
+    return 0
+
+
 def cmd_daemon(config, args):
+    # Autostart and an enabled user unit can both try to start this, and a
+    # machine-wide install adds one more way in; a second daemon would speak
+    # every announcement twice, so only the first one keeps the lock.
+    try:
+        # "a+" so a losing daemon does not truncate the winner's pid.
+        lock_file = open(_lock_path(), "a+")
+    except OSError as error:
+        print("warning: no lock file (%s); continuing" % error, file=sys.stderr)
+        lock_file = None
+    if lock_file is not None:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            print("a steves-clock daemon is already running", file=sys.stderr)
+            lock_file.close()
+            return 1
+        lock_file.seek(0)
+        lock_file.truncate()
+        lock_file.write("%d\n" % os.getpid())
+        lock_file.flush()
+
     def announce(target, slot):
         return engine.announce(config, target, slot=slot, log=_log)
 
@@ -120,6 +251,9 @@ def cmd_daemon(config, args):
         return schedule.run(config, announce, log=_log)
     except KeyboardInterrupt:
         return 0
+    finally:
+        if lock_file is not None:
+            lock_file.close()
 
 
 def cmd_list(config, args):
@@ -271,7 +405,7 @@ def build_parser():
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
     parser.epilog = (
         "With no command, opens the menu when run in a terminal and prints the "
-        "status otherwise. Also: steves-clock status|say|initialise|list|daemon|set|config"
+        "status otherwise. Also: steves-clock status|say|initialise|list|daemon|update|set|config"
     )
 
     status = subparsers.add_parser("status", help="show settings and installed packs")
@@ -288,6 +422,10 @@ def build_parser():
 
     daemon = subparsers.add_parser("daemon", help="run in the foreground, announcing on schedule")
     daemon.set_defaults(func=cmd_daemon)
+
+    update = subparsers.add_parser("update", help="check GitHub for a newer version and install it")
+    update.add_argument("--check", action="store_true", help="only report whether one exists")
+    update.set_defaults(func=cmd_update)
 
     listing = subparsers.add_parser("list", help="the voice list, with the slots using each entry")
     listing.set_defaults(func=cmd_list)

@@ -57,8 +57,9 @@ whether to add the GTK window on top:
   --gui             also install the GTK window
   --all             same as --gui
 
-  --prefix DIR      install under DIR (default: ~/.local, or /usr/local as root)
-  --no-service      do not set up the systemd user service
+  --prefix DIR      install under DIR (default: ~/.local, or /usr/local as root,
+                    which installs for every user on the machine)
+  --no-service      do not set up the systemd service
   --uninstall       remove installed program files and services
   --purge           with --uninstall, also delete settings and voice packs
   --yes             accept defaults without asking
@@ -96,6 +97,11 @@ LIB="${PREFIX}/lib/${APP}"
 UNIT="${CONFIG_HOME}/systemd/user/${APP}.service"
 DESKTOP="${DATA_HOME}/applications/${APP}.desktop"
 
+# Machine-wide locations, used only for a root install. Both are overridable
+# so a package build can stage them somewhere else.
+SYS_UNIT=${SYS_UNIT:-/etc/systemd/user/${APP}.service}
+AUTOSTART_DIR=${AUTOSTART_DIR:-/etc/xdg/autostart}
+
 # --------------------------------------------------------------- uninstall --
 
 if [ "$DO_UNINSTALL" -eq 1 ]; then
@@ -104,6 +110,9 @@ if [ "$DO_UNINSTALL" -eq 1 ]; then
         systemctl --user disable --now "${APP}.service" >/dev/null 2>&1 || true
     fi
     rm -f "$UNIT"
+    # Written only by a root install; absent (and unwritable) otherwise.
+    rm -f "$SYS_UNIT" 2>/dev/null || true
+    rm -f "${AUTOSTART_DIR}/${APP}.desktop" 2>/dev/null || true
     if command -v systemctl >/dev/null 2>&1; then
         systemctl --user daemon-reload >/dev/null 2>&1 || true
     fi
@@ -261,9 +270,54 @@ fi
 if [ "$DO_SERVICE" -eq 1 ]; then
     step "Setting up the background service"
     if [ "$SCOPE" = "system" ]; then
-        warn "installed as root, so no user service was created."
-        warn "Add this to the desktop user's own autostart instead:"
-        warn "  ${BIN}/${APP} daemon"
+        # Machine-wide. One root daemon cannot reach another user's sound
+        # server, and an announcement belongs to the session that plays it, so
+        # "for every user" means one daemon per session: a shared unit any
+        # account can enable, plus autostart so each desktop login starts it.
+        mkdir -p "$(dirname "$SYS_UNIT")" "$AUTOSTART_DIR"
+        cat > "$SYS_UNIT" <<EOF
+[Unit]
+Description=Steve's Talking Clock
+After=sound.target
+
+[Service]
+Type=simple
+ExecStart=${BIN}/${APP} daemon
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+        say "Shared unit for every user: ${SYS_UNIT}"
+        cat > "${AUTOSTART_DIR}/${APP}.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Steve's Talking Clock
+Comment=Announce the time on the quarter hour
+Exec=${BIN}/${APP} daemon
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+EOF
+        say "Starts with every desktop login: ${AUTOSTART_DIR}/${APP}.desktop"
+
+        # Root's own session, when this shell actually has one.
+        if command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload >/dev/null 2>&1; then
+            if systemctl --user enable "${APP}.service" >/dev/null 2>&1 \
+                && systemctl --user restart "${APP}.service" >/dev/null 2>&1; then
+                say "Started ${APP}.service for this account too"
+            else
+                warn "could not start the service for this account."
+                warn "Try: systemctl --user enable --now ${APP}.service"
+            fi
+        else
+            warn "this account has no systemd user instance, so nothing started here."
+            warn "That is normal for root over ssh or a console login without a desktop."
+            warn "Each user with a session runs:"
+            warn "  systemctl --user enable --now ${APP}.service"
+            warn "For a headless account, first:  loginctl enable-linger \$USER"
+        fi
+        say "Logs: journalctl --user -u ${APP} -f"
     else
         mkdir -p "$(dirname "$UNIT")"
         cat > "$UNIT" <<EOF

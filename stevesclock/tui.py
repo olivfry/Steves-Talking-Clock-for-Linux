@@ -54,6 +54,10 @@ def service_state():
     state = completed.stdout.strip()
     if state == "active":
         return "active - announces on the quarter hours with this menu closed"
+    if state == "inactive" and os.geteuid() == 0:
+        # A root install provides a shared unit and an autostart entry; neither
+        # runs until one of them is used, so point at the command that does it.
+        return "not running here - systemctl --user enable --now steves-clock"
     if state == "inactive":
         return "not running - nothing is announced unless you start it"
     if state == "failed":
@@ -140,6 +144,7 @@ class Menu:
             ("I", "Initialise", self.initialise),
             ("O", "Voices folder: path and packs", self.open_folder),
             ("P", "Add a voice pack from a folder", self.add_pack),
+            ("U", "Update (check GitHub and install)", self.update),
             ("A", "Audio output device", self.choose_device),
             ("Q", "Quiet Mode", self.quiet_menu),
             ("K", "Hotkeys", self.hotkeys),
@@ -313,6 +318,20 @@ class Menu:
                 self.say("Could not open a file manager: %s" % error)
         else:
             self.say("(No graphical display here, so no file manager was opened.)")
+
+    def update(self):
+        # Imported here: cli imports this module for the menu, so a top-level
+        # import would be circular.
+        from types import SimpleNamespace
+
+        from .cli import cmd_update
+
+        self.say("")
+        try:
+            cmd_update(self.config, SimpleNamespace(check=False))
+        except Exception as error:  # never kill the menu over a failed update
+            self.say("Update failed: %s" % error)
+        self.say("")
 
     def add_pack(self):
         try:

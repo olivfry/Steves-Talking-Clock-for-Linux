@@ -48,7 +48,7 @@ the window has; piped or in a script it prints the status instead, so it never
 blocks. `steves-clock-tui` is an alias for the same thing:
 
 ```
-Steve's Talking Clock 0.7.1
+Steve's Talking Clock 0.9.0
   Main Voice List:               Default       method 1 - Simple
   Quarter Hour Voice List:       None          silent
   …
@@ -65,8 +65,8 @@ Menu:
   9) 24 Hour Mode (toggle)    S) Say Time
   I) Initialise               O) Voices folder: path and packs
   P) Add a voice pack         A) Audio output device
-  Q) Quiet Mode               K) Hotkeys
-  X) Exit
+  U) Update (check GitHub)    Q) Quiet Mode
+  K) Hotkeys                  X) Exit
 ```
 
 The summary also reports the **background service** state, so closing the menu
@@ -129,6 +129,7 @@ Every button has a command:
 | Audio… | `steves-clock set general.device=<sink>` |
 | Hotkeys… | see *Not ported* below |
 | Quiet Mode… | `steves-clock set quiet.enabled=true` |
+| Check for updates | `steves-clock update` |
 
 ```bash
 steves-clock status          # every slot, gap, alarm, quiet, device
@@ -213,6 +214,25 @@ journalctl --user -u steves-clock -f
 
 To keep running when you are not logged in: `loginctl enable-linger "$USER"`.
 
+## Updating
+
+Nothing phones home and nothing checks on a timer: the clock asks GitHub only
+when you do.
+
+```bash
+steves-clock update --check    # report installed vs published, change nothing
+steves-clock update            # download the current build and reinstall it
+```
+
+`update` reads the version from the repository, downloads that branch's
+archive, runs its installer with the prefix this copy already uses (adding the
+window if you had it) and lets it restart the service. Settings, voice packs and
+the config file survive, because the installer only replaces programme files.
+Reopen the window afterwards to pick up the new code.
+
+From a source checkout it does not guess: it tells you to `git pull` and
+re-run `./install.sh`.
+
 ## Layout
 
 ```
@@ -237,8 +257,8 @@ To keep running when you are not logged in: `loginctl enable-linger "$USER"`.
 
 - **Global hotkeys.** They need an X11 key grab. Bind `steves-clock say` and
   friends in your desktop's own keyboard settings instead.
-- **Update checking and launch-at-login prompt.** The installer handles the
-  service; updates are `git pull`.
+- **The launch-at-login prompt.** The installer sets up the service instead;
+  updates are `steves-clock update`.
 - **Per-device volume routing** beyond naming an output sink.
 
 ## Development notes
