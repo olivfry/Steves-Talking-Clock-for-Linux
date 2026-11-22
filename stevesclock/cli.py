@@ -214,6 +214,10 @@ def cmd_update(config, args):
             print("Already up to date.")
         else:
             print("This copy is newer than the published one.")
+            if source == "mirror":
+                # A cached file cannot prove there is nothing newer.
+                print("That mirror lags, so a recent release may not show here yet.")
+                print("To install whatever is on the branch now: steves-clock update --force")
         return 0
     if getattr(args, "check", False):
         if newer:
