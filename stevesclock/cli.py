@@ -160,15 +160,19 @@ def _fetch_text(url, headers=None):
 
 def _version_sources():
     # A test or a mirror can pin the source; otherwise ask the API, then raw.
+    # "mirror" is flagged because that copy is cached for minutes.
     if os.environ.get("STEVES_CLOCK_UPDATE_VERSION_URL"):
-        return [(UPDATE_VERSION_URL, {})]
-    return [(UPDATE_VERSION_API, {"Accept": "application/vnd.github.raw"}), (UPDATE_VERSION_URL, {})]
+        return [(UPDATE_VERSION_URL, {}, "pinned")]
+    return [
+        (UPDATE_VERSION_API, {"Accept": "application/vnd.github.raw"}, "api"),
+        (UPDATE_VERSION_URL, {}, "mirror"),
+    ]
 
 
 def _published_version():
     """The __version__ on the published branch, read straight from the repo."""
     problems = []
-    for url, headers in _version_sources():
+    for url, headers, label in _version_sources():
         try:
             body = _fetch_text(url, headers)
         except Exception as error:
@@ -176,7 +180,7 @@ def _published_version():
             continue
         match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', body)
         if match:
-            return match.group(1).strip()
+            return match.group(1).strip(), label
         problems.append("no __version__ at %s" % url)
     raise ValueError("; ".join(problems))
 
@@ -193,23 +197,29 @@ def cmd_update(config, args):
     """Check the repository and, unless --check, install the newer build."""
     print("Installed: %s" % VERSION)
     try:
-        latest = _published_version()
+        latest, source = _published_version()
     except Exception as error:  # offline, blocked, or the file moved
         print("could not check for updates: %s" % error)
         print("The installer is at %s" % UPDATE_ARCHIVE_URL)
         return 1
-    print("Published: %s" % latest)
+    note = "" if source != "mirror" else " (mirror, can lag a few minutes)"
+    print("Published: %s%s" % (latest, note))
 
-    if _version_tuple(latest) <= _version_tuple(VERSION):
+    newer = _version_tuple(latest) > _version_tuple(VERSION)
+    force = getattr(args, "force", False)
+    if newer:
+        print("Update available: %s -> %s" % (VERSION, latest))
+    if not newer and not force:
         if latest == VERSION:
             print("Already up to date.")
         else:
             print("This copy is newer than the published one.")
         return 0
-
-    print("Update available: %s -> %s" % (VERSION, latest))
     if getattr(args, "check", False):
-        print("Run 'steves-clock update' to install it.")
+        if newer:
+            print("Run 'steves-clock update' to install it.")
+        else:
+            print("Nothing newer is published; --force would reinstall this build.")
         return 0
 
     prefix = _install_prefix()
@@ -238,7 +248,7 @@ def cmd_update(config, args):
         command = ["bash", str(roots[0] / "install.sh"), "--yes", "--prefix", str(prefix)]
         if (prefix / "bin" / ("steves-clock-gui")).exists():
             command.append("--all")
-        print("Installing %s into %s" % (latest, prefix))
+        print("Installing %s into %s%s" % (latest, prefix, " (forced)" if force else ""))
         code = subprocess.call(command)
         if code != 0:
             print("the installer exited %d; the previous version is still installed" % code)
@@ -453,6 +463,7 @@ def build_parser():
 
     update = subparsers.add_parser("update", help="check GitHub for a newer version and install it")
     update.add_argument("--check", action="store_true", help="only report whether one exists")
+    update.add_argument("--force", action="store_true", help="reinstall the published build regardless")
     update.set_defaults(func=cmd_update)
 
     listing = subparsers.add_parser("list", help="the voice list, with the slots using each entry")
