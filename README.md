@@ -34,6 +34,7 @@ It then copies the `Default` pack the Mac build ships and enables a systemd
 | `--cli` / `--gui` / `--all` | skip the question |
 | `--prefix DIR` | install under `DIR` (default `~/.local`, or `/usr/local` as root) |
 | `--no-service` | don't create or start the systemd unit |
+| `--linger` / `--no-linger` | keep the service running when you are logged out, or don't (asked by default) |
 | `--uninstall` | remove programme files, launchers, menu entry and unit |
 | `--uninstall --purge` | also delete settings and voice packs |
 | `--yes` | accept the defaults, no prompt |
@@ -212,7 +213,16 @@ systemctl --user status steves-clock
 journalctl --user -u steves-clock -f
 ```
 
-To keep running when you are not logged in: `loginctl enable-linger "$USER"`.
+It also asks whether the clock should keep running when you are logged out. Say
+yes and it runs `loginctl enable-linger "$USER"` (or tells you the `sudo` form
+when it is not allowed to). Two things follow from that:
+
+- the daemon survives logout, so it keeps its schedule and its log
+- it can still only be heard while a sound server of yours is running, since an
+  announcement belongs to the session that plays it
+
+For a scripted install, `--linger` and `--no-linger` answer the question; the
+default, and what `--yes` picks, is to run only inside a desktop session.
 
 ## Updating
 

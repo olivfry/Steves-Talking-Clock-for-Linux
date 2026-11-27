@@ -28,6 +28,8 @@ DO_SERVICE=1
 DO_UNINSTALL=0
 DO_PURGE=0
 ASSUME_YES=0
+LINGER=0
+LINGER_SET=0
 
 CONFIG_HOME=${XDG_CONFIG_HOME:-${HOME}/.config}
 DATA_HOME=${XDG_DATA_HOME:-${HOME}/.local/share}
@@ -50,7 +52,7 @@ usage() {
 ${BOLD}Usage:${OFF} ./install.sh [options]
 
 The command line is always installed - it is also the menu, since running
-`steves-clock` at a terminal opens an interactive one. The only choice is
+\`steves-clock\` at a terminal opens an interactive one. The only choice is
 whether to add the GTK window on top:
 
   --cli             command line only (default when there is no desktop)
@@ -60,6 +62,9 @@ whether to add the GTK window on top:
   --prefix DIR      install under DIR (default: ~/.local, or /usr/local as root,
                     which installs for every user on the machine)
   --no-service      do not set up the systemd service
+  --linger          keep the service running when you are logged out
+                    (loginctl enable-linger; asked interactively by default)
+  --no-linger       only run while you have a desktop session
   --uninstall       remove installed program files and services
   --purge           with --uninstall, also delete settings and voice packs
   --yes             accept defaults without asking
@@ -78,6 +83,8 @@ while [ $# -gt 0 ]; do
         --prefix)     [ $# -ge 2 ] || die "--prefix needs a directory"; PREFIX=$2; shift ;;
         --prefix=*)   PREFIX=${1#*=} ;;
         --no-service) DO_SERVICE=0 ;;
+        --linger)     LINGER=1; LINGER_SET=1 ;;
+        --no-linger)  LINGER=0; LINGER_SET=1 ;;
         --uninstall)  DO_UNINSTALL=1 ;;
         --purge)      DO_PURGE=1 ;;
         --yes|-y)     ASSUME_YES=1 ;;
@@ -205,6 +212,23 @@ if [ "$WITH_GUI" -eq 1 ] && ! has_gtk; then
     WITH_GUI=0
 fi
 
+if [ "$DO_SERVICE" -eq 1 ] && [ "$ASSUME_YES" -eq 0 ] && [ -t 0 ] && [ "$LINGER_SET" -eq 0 ]; then
+    step "Should the clock keep running when you are logged out?"
+    say "  1) No - it starts with each desktop login (the usual choice)"
+    say "  2) Yes - keep the service alive with no session open"
+    say "Choice 2 turns on lingering for ${USER}. It still only makes sound"
+    say "while a sound server of ${USER}'s is running, so it suits a machine"
+    say "that keeps a session or a standalone PipeWire/Pulse server up."
+    default=1
+    printf 'Choice [%s]: ' "$default"
+    read -r answer || answer=""
+    case "${answer:-$default}" in
+        1) LINGER=0 ;;
+        2) LINGER=1 ;;
+        *) die "unrecognised choice: $answer" ;;
+    esac
+fi
+
 # ------------------------------------------------------------------ install --
 
 step "Installing to ${PREFIX}"
@@ -269,6 +293,16 @@ fi
 
 if [ "$DO_SERVICE" -eq 1 ]; then
     step "Setting up the background service"
+    # Before the unit is enabled: lingering starts this account's user manager,
+    # which is what makes systemctl --user work from a bare shell.
+    if [ "$LINGER" -eq 1 ]; then
+        if loginctl enable-linger "$USER" >/dev/null 2>&1; then
+            say "Keeps running when ${USER} is logged out (linger is on)"
+        else
+            warn "could not enable lingering for ${USER}."
+            warn "Run:  sudo loginctl enable-linger ${USER}"
+        fi
+    fi
     if [ "$SCOPE" = "system" ]; then
         # Machine-wide. One root daemon cannot reach another user's sound
         # server, and an announcement belongs to the session that plays it, so
