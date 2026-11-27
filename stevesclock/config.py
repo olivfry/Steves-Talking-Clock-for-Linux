@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import configparser
 import os
+import re
 from pathlib import Path
 
 APP = "steves-clock"
@@ -25,6 +26,19 @@ SLOT_LABELS = {
     "three_quarter": "Three Quarter Hour Voice List",
     "hour": "On the Hour Voice List",
     "alarm": "Alarm Voice List",
+}
+
+#: Week days in the order Python numbers them, Monday first.
+DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+DAY_LABELS = {
+    "mon": "Mon",
+    "tue": "Tue",
+    "wed": "Wed",
+    "thu": "Thu",
+    "fri": "Fri",
+    "sat": "Sat",
+    "sun": "Sun",
 }
 
 DEFAULTS = {
@@ -47,6 +61,7 @@ DEFAULTS = {
         "enabled": "false",
         "stop": "11:00 pm",
         "start": "08:00 am",
+        "days": "every",
     },
     "alarm": {
         "time": "08:00 am",
@@ -207,17 +222,53 @@ class Config:
         mapping = {"quarter": 15, "half": 30, "three_quarter": 45, "hour": 0}
         return sorted(minute for key, minute in mapping.items())
 
-    def quiet_window(self):
-        """(stop_minutes, start_minutes) or None when quiet mode is off.
+    def quiet_days(self):
+        """Day indexes (Monday = 0) the quiet window applies to."""
+        try:
+            return parse_days(self.get("quiet", "days"))
+        except ValueError:
+            # A typo must not silence the quiet hours altogether: fall back to
+            # the default of every day and let the settings screens show it.
+            return list(range(7))
+
+    def quiet_window(self, day=None):
+        """(stop_minutes, start_minutes) or None when that day is not quiet.
 
         "Stop speaking after" is when quiet begins, "start speaking from" is
-        when it ends - the same naming the Mac sheet uses.
+        when it ends - the same naming the Mac sheet uses. ``day`` is a weekday
+        index with Monday as 0; without it the window is the default every
+        listed day follows, which is what the settings screens edit.
         """
         if not self.get_bool("quiet", "enabled"):
             return None
-        stop = parse_clock(self.get("quiet", "stop"), 23 * 60)
-        start = parse_clock(self.get("quiet", "start"), 8 * 60)
-        return stop, start
+        if day is None:
+            return self._quiet_times("")
+        if day not in self.quiet_days():
+            return None
+        name = DAYS[day]
+        if self.get_bool("quiet", name + ".off"):
+            return None
+        return self._quiet_times(name)
+
+    def _quiet_times(self, name):
+        """One day's window, with ``mon.stop``/``mon.start`` honoured.
+
+        A day without its own times follows ``quiet.stop``/``quiet.start``, not
+        the built-in 11 pm/8 am, or setting the default would change nothing on
+        a day that had once been given an override.
+        """
+        default_stop = parse_clock(self.get("quiet", "stop"), 23 * 60)
+        default_start = parse_clock(self.get("quiet", "start"), 8 * 60)
+        if not name:
+            return default_stop, default_start
+        return (
+            parse_clock(self.get("quiet", name + ".stop"), default_stop),
+            parse_clock(self.get("quiet", name + ".start"), default_start),
+        )
+
+    def quiet_week(self):
+        """Every day's window, Monday first, or None where nothing is quiet."""
+        return [self.quiet_window(index) for index in range(7)]
 
     def alarm_time(self):
         """Minutes past midnight, or None if the field cannot be parsed."""
@@ -268,3 +319,75 @@ def format_clock(minutes, use24=False):
     if use24:
         return "%02d:%02d" % (hour, minute)
     return "%02d:%02d %s" % (hour % 12 or 12, minute, "pm" if hour >= 12 else "am")
+
+
+def _day_index(word):
+    for position, name in enumerate(DAYS):
+        if word in (name, name + "day", name + "s"):
+            return position
+    return {"tues": 1, "weds": 2, "thur": 3, "thurs": 3}.get(word)
+
+
+def parse_days(text):
+    """Day indexes for a ``quiet.days`` value, Monday first.
+
+    Accepts ``every``/``daily``, ``weekdays``, ``weekends``, ``none``, or a
+    comma-separated list such as ``mon,tue,wed,thu``. Raises ValueError on a
+    word it does not know, so a typo is reported rather than guessed at.
+    """
+    text = (text or "").strip().lower().replace(" ", "")
+    if not text or text in ("every", "everyday", "daily", "all"):
+        return list(range(7))
+    if text in ("none", "never", "off"):
+        return []
+    if text in ("weekdays", "weekday", "workdays", "mon-fri", "monfri"):
+        return [0, 1, 2, 3, 4]
+    if text in ("weekends", "weekend", "sat-sun", "satsun"):
+        return [5, 6]
+    found = []
+    for word in re.split(r"[,;]", text):
+        if not word:
+            continue
+        index = _day_index(word)
+        if index is None:
+            raise ValueError("unknown day %r" % word)
+        if index not in found:
+            found.append(index)
+    if not found:
+        raise ValueError("no days named")
+    return sorted(found)
+
+
+def describe_days(indexes):
+    """A short phrase for a set of day indexes, e.g. "Sun to Thu"."""
+    indexes = sorted(set(indexes))
+
+    def label(index):
+        return DAY_LABELS[DAYS[index]]
+
+    if not indexes:
+        return "no days"
+    if len(indexes) == 7:
+        return "every day"
+    if len(indexes) == 1:
+        return label(indexes[0])
+    if len(indexes) == 2:
+        return "%s and %s" % (label(indexes[0]), label(indexes[1]))
+
+    runs, current = [], [indexes[0]]
+    for index in indexes[1:]:
+        if index == current[-1] + 1:
+            current.append(index)
+        else:
+            runs.append(current)
+            current = [index]
+    runs.append(current)
+
+    if len(runs) == 2 and runs[0][0] == 0 and runs[-1][-1] == 6:
+        # Sunday to Thursday wraps past the end of the week.
+        start, end = runs[-1][0], runs[0][-1]
+    elif len(runs) == 1:
+        start, end = runs[0][0], runs[0][-1]
+    else:
+        return ", ".join(label(index) for index in indexes)
+    return "%s to %s" % (label(start), label(end))

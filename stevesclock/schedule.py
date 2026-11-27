@@ -58,20 +58,29 @@ def next_event(now, minutes, alarm_minutes=None):
     return min(events)
 
 
-def in_quiet(now, window):
+def in_quiet(now, window, previous=None):
     """True if ``now`` falls inside the quiet window.
 
     ``window`` is (stop_minutes, start_minutes): quiet from the moment speech
-    should stop until the moment it should start again.
+    should stop until the moment it should start again. ``previous`` is
+    yesterday's window, because the hours after midnight belong to the day the
+    window opened - Friday night can be quiet while Friday evening is not.
     """
+    current = now.hour * 60 + now.minute
+    if previous:
+        previous_stop, previous_start = previous
+        if previous_stop > previous_start and current < previous_start:
+            return True
     if not window:
         return False
     stop, start = window
     if stop == start:
         return False
-    current = now.hour * 60 + now.minute
     if stop > start:
-        return current >= stop or current < start
+        # Only the evening half: the hours after midnight belong to the day the
+        # window opened on, which is ``previous``. Counting them here too would
+        # keep a Tuesday morning quiet after Monday was switched off.
+        return current >= stop
     return current >= stop and current < start
 
 
@@ -130,7 +139,11 @@ def run(config, announce, log=print):
                 announce(target, "alarm")
             except Exception as error:  # a failed alarm must not kill the daemon
                 log("alarm failed: %s" % error)
-        elif in_quiet(target, config.quiet_window()):
+        elif in_quiet(
+            target,
+            config.quiet_window(target.weekday()),
+            config.quiet_window((target.weekday() - 1) % 7),
+        ):
             log("%s quiet" % target.strftime("%H:%M"))
         else:
             try:
