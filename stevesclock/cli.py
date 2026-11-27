@@ -21,7 +21,16 @@ import urllib.request
 from pathlib import Path
 
 from . import __version__, audio, engine, packs, schedule, tts
-from .config import SLOT_LABELS, SLOTS, Config, format_clock, parse_clock
+from .config import (
+    DAY_LABELS,
+    DAYS,
+    SLOT_LABELS,
+    SLOTS,
+    Config,
+    describe_days,
+    format_clock,
+    parse_clock,
+)
 
 VERSION = __version__
 
@@ -76,9 +85,27 @@ def cmd_status(config, args):
     quiet = config.quiet_window()
     if quiet:
         print(
-            "Quiet mode:    on, after %s until %s"
-            % (format_clock(quiet[0], config.hour24), format_clock(quiet[1], config.hour24))
+            "Quiet mode:    on, %s to %s, %s"
+            % (
+                format_clock(quiet[0], config.hour24),
+                format_clock(quiet[1], config.hour24),
+                describe_days(config.quiet_days()),
+            )
         )
+        # Only days that differ from the default need their own line.
+        for index, window in enumerate(config.quiet_week()):
+            name = DAY_LABELS[DAYS[index]] + ":"
+            if window is None:
+                print("  %-11s no quiet hours" % name)
+            elif window != quiet:
+                print(
+                    "  %-11s %s to %s"
+                    % (
+                        name,
+                        format_clock(window[0], config.hour24),
+                        format_clock(window[1], config.hour24),
+                    )
+                )
     else:
         print(
             "Quiet mode:    off (%s to %s)"

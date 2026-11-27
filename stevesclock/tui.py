@@ -16,9 +16,18 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 from . import __version__, audio, engine, packs, tts
-from .config import SLOT_LABELS, SLOTS, Config, format_clock, parse_clock
+from .config import (
+    SLOT_LABELS,
+    SLOTS,
+    Config,
+    describe_days,
+    format_clock,
+    parse_clock,
+    parse_days,
+)
 
 HOTKEY_TEXT = """Global hotkeys need an X11 key grab, which this build does not do.
 The command line covers each one:
@@ -37,10 +46,33 @@ class _End(Exception):
     """Raised when input runs out."""
 
 
+def daemon_pid():
+    """PID of a running daemon taken from its lock file, or None."""
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    base = runtime if runtime and os.path.isdir(runtime) else tempfile.gettempdir()
+    try:
+        with open(os.path.join(base, "steves-clock.lock"), encoding="utf-8") as handle:
+            pid = int(handle.read().strip() or 0)
+    except (OSError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        return pid
+    return pid
+
+
 def service_state():
     """One line describing whether the clock is running on its own."""
+    pid = daemon_pid()
     if not shutil.which("systemctl"):
-        return "unknown - no systemd here"
+        if pid:
+            return "running (pid %d) - no systemd here, it was started by hand" % pid
+        return "not running - no systemd here; start it with 'steves-clock daemon'"
     try:
         completed = subprocess.run(
             ["systemctl", "--user", "is-active", "steves-clock.service"],
@@ -50,19 +82,29 @@ def service_state():
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    state = completed.stdout.strip()
+        completed = None
+    state = (completed.stdout or "").strip() if completed else ""
     if state == "active":
         return "active - announces on the quarter hours with this menu closed"
-    if state == "inactive" and os.geteuid() == 0:
-        # A root install provides a shared unit and an autostart entry; neither
-        # runs until one of them is used, so point at the command that does it.
-        return "not running here - systemctl --user enable --now steves-clock"
-    if state == "inactive":
-        return "not running - nothing is announced unless you start it"
+    if state == "activating":
+        return "starting - it will announce once systemd reports active"
     if state == "failed":
         return "failed - see journalctl --user -u steves-clock"
-    return state or "unknown"
+    if pid:
+        # Started by hand, or by a desktop autostart entry, rather than the unit.
+        return "running (pid %d) - started outside this systemd user session" % pid
+    if state == "inactive":
+        if os.geteuid() == 0:
+            return "not running here - systemctl --user enable --now steves-clock"
+        return "not running - nothing is announced unless you start it"
+    # No answer at all: there is no user manager to ask, which is normal for
+    # root over ssh or a console login without a desktop session.
+    if os.geteuid() == 0:
+        return (
+            "not running - no systemd user session here; loginctl enable-linger root, "
+            "then systemctl --user enable --now steves-clock"
+        )
+    return "not running - no systemd user session here; start it with 'steves-clock daemon'"
 
 
 def have_display():
@@ -108,8 +150,12 @@ class Menu:
             "  %-30s %s"
             % (
                 "Quiet mode:",
-                "on, after %s until %s"
-                % (format_clock(quiet[0], config.hour24), format_clock(quiet[1], config.hour24))
+                "on, %s to %s, %s"
+                % (
+                    format_clock(quiet[0], config.hour24),
+                    format_clock(quiet[1], config.hour24),
+                    describe_days(config.quiet_days()),
+                )
                 if quiet
                 else "off",
             )
@@ -399,11 +445,13 @@ class Menu:
             self.say("")
             self.say("Quiet Mode Settings")
             self.say("  Quiet mode:            %s" % ("on" if quiet else "off"))
+            self.say("  Applies to:            %s" % describe_days(config.quiet_days()))
             self.say("  Stop speaking after:   %s" % config.get("quiet", "stop"))
             self.say("  Start speaking from:   %s" % config.get("quiet", "start"))
             self.say("  1) Enable           2) Disable")
             self.say("  3) Stop speaking after    4) Start speaking from")
-            self.say("  5) Back")
+            self.say("  5) Days (every day, weekdays, weekends, or sun,mon,...)")
+            self.say("  6) Back")
             try:
                 answer = self.prompt("Choice: ")
             except _End:
@@ -421,7 +469,20 @@ class Menu:
                         self.say("Could not read %r - try 11:00 pm or 23:00." % value)
                         continue
                     config.set("quiet", key, value)
-            elif answer in ("5", ""):
+            elif answer == "5":
+                value = self.prompt(
+                    "Days to keep quiet [%s] - every day, weekdays, weekends, "
+                    "none, or mon,tue,wed: " % config.get("quiet", "days")
+                )
+                if value:
+                    try:
+                        days = parse_days(value)
+                    except ValueError as error:
+                        self.say("Could not read those days: %s" % error)
+                        continue
+                    config.set("quiet", "days", value.strip())
+                    self.say("Quiet hours now apply to %s" % describe_days(days))
+            elif answer in ("6", ""):
                 return
             else:
                 self.say("No such choice: %s" % answer)
