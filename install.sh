@@ -291,6 +291,23 @@ fi
 
 # ------------------------------------------------------------------ service --
 
+# systemctl --user and journalctl --user talk to this account's own bus. A root
+# shell over ssh has neither XDG_RUNTIME_DIR nor DBUS_SESSION_BUS_ADDRESS, so
+# those commands answer "Failed to connect to user scope bus via local
+# transport" and the advice to run one is worse than useless.
+USER_BUS=0
+if command -v systemctl >/dev/null 2>&1; then
+    if systemctl --user show-environment >/dev/null 2>&1; then
+        USER_BUS=1
+    fi
+fi
+
+user_bus_hint() {
+    warn "That shell has no systemd user bus, which is normal for root over ssh."
+    warn "Prefix --user commands with XDG_RUNTIME_DIR=/run/user/\$(id -u), or run"
+    warn "them from a desktop terminal, where the bus is already set."
+}
+
 if [ "$DO_SERVICE" -eq 1 ]; then
     step "Setting up the background service"
     # Before the unit is enabled: lingering starts this account's user manager,
@@ -351,7 +368,12 @@ EOF
             warn "  systemctl --user enable --now ${APP}.service"
             warn "For a headless account, first:  loginctl enable-linger \$USER"
         fi
-        say "Logs: journalctl --user -u ${APP} -f"
+        if [ "$USER_BUS" -eq 1 ]; then
+            say "Logs: journalctl --user -u ${APP} -f"
+        else
+            say "Logs (from a desktop session): journalctl --user -u ${APP} -f"
+            user_bus_hint
+        fi
     else
         mkdir -p "$(dirname "$UNIT")"
         cat > "$UNIT" <<EOF
@@ -381,9 +403,19 @@ EOF
         else
             warn "systemd user services are unavailable here."
             warn "The unit is written to ${UNIT}; start it manually with:"
-            warn "  systemctl --user daemon-reload && systemctl --user enable --now ${APP}.service"
+            if [ "$USER_BUS" -eq 1 ]; then
+                warn "  systemctl --user daemon-reload && systemctl --user enable --now ${APP}.service"
+            else
+                warn "  XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user daemon-reload"
+                warn "  XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user enable --now ${APP}.service"
+            fi
         fi
-        say "Logs: journalctl --user -u ${APP} -f"
+        if [ "$USER_BUS" -eq 1 ]; then
+            say "Logs: journalctl --user -u ${APP} -f"
+        else
+            say "Logs (from a desktop session): journalctl --user -u ${APP} -f"
+            user_bus_hint
+        fi
     fi
 fi
 

@@ -116,9 +116,11 @@ def service_state():
     # No answer at all: there is no user manager to ask, which is normal for
     # root over ssh or a console login without a desktop session.
     if os.geteuid() == 0:
+        # A root shell over ssh has no XDG_RUNTIME_DIR, so the bare command
+        # only earns a bus complaint; give it the runtime directory instead.
         return (
-            "not running - no systemd user session here; loginctl enable-linger root, "
-            "then systemctl --user enable --now steves-clock"
+            "not running - no systemd user bus here; loginctl enable-linger root, then "
+            "XDG_RUNTIME_DIR=/run/user/0 systemctl --user enable --now steves-clock"
         )
     return "not running - no systemd user session here; start it with 'steves-clock daemon'"
 
