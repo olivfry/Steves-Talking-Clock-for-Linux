@@ -46,24 +46,40 @@ class _End(Exception):
     """Raised when input runs out."""
 
 
+def _lock_candidates():
+    """Everywhere a daemon could have left its lock file.
+
+    A daemon started by a desktop autostart entry runs with a session runtime
+    directory, while a root shell over ssh has none and falls back to /tmp. Ask
+    both, or the menu reports the clock as stopped while it is announcing.
+    """
+    paths = []
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime:
+        paths.append(os.path.join(runtime, "steves-clock.lock"))
+    paths.append("/run/user/%d/steves-clock.lock" % os.getuid())
+    paths.append(os.path.join(tempfile.gettempdir(), "steves-clock.lock"))
+    return paths
+
+
 def daemon_pid():
     """PID of a running daemon taken from its lock file, or None."""
-    runtime = os.environ.get("XDG_RUNTIME_DIR")
-    base = runtime if runtime and os.path.isdir(runtime) else tempfile.gettempdir()
-    try:
-        with open(os.path.join(base, "steves-clock.lock"), encoding="utf-8") as handle:
-            pid = int(handle.read().strip() or 0)
-    except (OSError, ValueError):
-        return None
-    if pid <= 0:
-        return None
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return None
-    except PermissionError:
+    for path in _lock_candidates():
+        try:
+            with open(path, encoding="utf-8") as handle:
+                pid = int(handle.read().strip() or 0)
+        except (OSError, ValueError):
+            continue
+        if pid <= 0:
+            continue
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            continue  # a stale lock: keep looking
+        except PermissionError:
+            return pid
         return pid
-    return pid
+    return None
 
 
 def service_state():
