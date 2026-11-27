@@ -244,6 +244,19 @@ systemctl --user status steves-clock
 journalctl --user -u steves-clock -f
 ```
 
+Those two talk to your account's own bus, which a desktop terminal already has.
+A root shell over ssh has neither `XDG_RUNTIME_DIR` nor
+`DBUS_SESSION_BUS_ADDRESS`, so it answers
+
+> Failed to connect to user scope bus via local transport…
+
+Give them the runtime directory that lingering created instead:
+
+```bash
+XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user status steves-clock
+XDG_RUNTIME_DIR=/run/user/$(id -u) journalctl --user -u steves-clock -f
+```
+
 It also asks whether the clock should keep running when you are logged out. Say
 yes and it runs `loginctl enable-linger "$USER"` (or tells you the `sudo` form
 when it is not allowed to). Two things follow from that:
