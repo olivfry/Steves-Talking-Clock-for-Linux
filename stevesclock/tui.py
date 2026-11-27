@@ -20,6 +20,8 @@ import tempfile
 
 from . import __version__, audio, engine, packs, tts
 from .config import (
+    DAY_LABELS,
+    DAYS,
     SLOT_LABELS,
     SLOTS,
     Config,
@@ -473,11 +475,12 @@ class Menu:
             self.say("  Applies to:            %s" % describe_days(config.quiet_days()))
             self.say("  Stop speaking after:   %s" % config.get("quiet", "stop"))
             self.say("  Start speaking from:   %s" % config.get("quiet", "start"))
-            self.say("  (Days pick when the window applies; the two times are the hours")
-            self.say("   used on those days, so changing days leaves the rest as it is.)")
+            self.say("  (These two times are the default. The days above use them;")
+            self.say("   option 7 gives one day its own hours, or none at all.)")
             self.say("  1) Enable           2) Disable")
             self.say("  3) Stop speaking after    4) Start speaking from")
             self.say("  5) Days (every day, weekdays, weekends, or sun,mon,...)")
+            self.say("  7) Day by day (one day's own hours, or none)")
             self.say("  6) Back")
             try:
                 answer = self.prompt("Choice: ")
@@ -522,12 +525,122 @@ class Menu:
                             "Days saved as %s, but Quiet mode is off - press 1 to turn it on."
                             % describe_days(days)
                         )
+            elif answer == "7":
+                self.day_menu()
             elif answer in ("6", ""):
                 return
             else:
                 self.say("No such choice: %s" % answer)
                 continue
             config.save()
+
+    def day_menu(self):
+        """The week at a glance, and a way in to one day's own hours."""
+        config = self.config
+        while True:
+            self.say("")
+            self.say("Quiet hours day by day")
+            for index, name in enumerate(DAYS):
+                label = DAY_LABELS[name]
+                window = config.quiet_window(index)
+                own = bool(
+                    config.get("quiet", name + ".stop")
+                    or config.get("quiet", name + ".start")
+                )
+                if config.get_bool("quiet", name + ".off"):
+                    note = "no quiet hours"
+                elif window is None and own:
+                    # Own times are set but the day is filtered out: the one
+                    # case where the file and the behaviour disagree.
+                    note = "own times set, but not in the day list"
+                elif window is None:
+                    note = "nothing quiet - not in the day list"
+                else:
+                    note = "%s to %s%s" % (
+                        format_clock(window[0], config.hour24),
+                        format_clock(window[1], config.hour24),
+                        ", its own times" if own else ", the default times",
+                    )
+                self.say("  %d) %-4s %s" % (index + 1, label, note))
+            self.say("  8) Back")
+            try:
+                answer = self.prompt("Choice: ")
+            except _End:
+                return
+            if not answer:
+                continue
+            if answer.isdigit() and 1 <= int(answer) <= 7:
+                self.day_hours(int(answer) - 1)
+            elif answer == "8":
+                return
+            else:
+                self.say("No such choice: %s" % answer)
+
+    def day_hours(self, day):
+        """One day: its own stop/start, back to the default, or no quiet at all."""
+        config = self.config
+        name = DAYS[day]
+        label = DAY_LABELS[name]
+        while True:
+            window = config.quiet_window(day)
+            own = bool(
+                config.get("quiet", name + ".stop") or config.get("quiet", name + ".start")
+            )
+            self.say("")
+            self.say("%s - quiet hours" % label)
+            if config.get_bool("quiet", name + ".off"):
+                self.say("  Now: none - this day is skipped")
+            elif window is None and own:
+                self.say("  Now: none - it has its own times, but %s is not in the day list" % label)
+            elif window is None:
+                self.say("  Now: none - %s is not in the day list" % label)
+            else:
+                self.say(
+                    "  Now: %s to %s (%s)"
+                    % (
+                        format_clock(window[0], config.hour24),
+                        format_clock(window[1], config.hour24),
+                        "its own times" if own else "the default times",
+                    )
+                )
+            self.say(
+                "  Default: %s to %s"
+                % (config.get("quiet", "stop"), config.get("quiet", "start"))
+            )
+            self.say("  1) Stop speaking after   2) Start speaking from")
+            self.say("  3) Use the default times   4) No quiet hours on %s" % label)
+            self.say("  5) Back")
+            try:
+                answer = self.prompt("Choice: ")
+            except _End:
+                return
+            if answer in ("1", "2"):
+                key = "stop" if answer == "1" else "start"
+                which = "Stop speaking after" if key == "stop" else "Start speaking from"
+                current = window[(0 if key == "stop" else 1)] if window else parse_clock(
+                    config.get("quiet", key), 23 * 60
+                )
+                value = self.prompt("%s [%s]: " % (which, format_clock(current, config.hour24)))
+                if value:
+                    if parse_clock(value) is None:
+                        self.say("Could not read %r - try 11:00 pm or 23:00." % value)
+                        continue
+                    config.set("quiet", name + "." + key, value)
+                    config.save()
+            elif answer == "3":
+                # Remove all three, so the day looks untouched in the file too.
+                for key in (".stop", ".start", ".off"):
+                    config.unset("quiet", name + key)
+                config.save()
+                self.say("%s follows the default times again." % label)
+            elif answer == "4":
+                config.set_bool("quiet", name + ".off", True)
+                config.save()
+                self.say("No quiet hours on %s." % label)
+            elif answer in ("5", ""):
+                return
+            else:
+                self.say("No such choice: %s" % answer)
 
     def hotkeys(self):
         self.say("")

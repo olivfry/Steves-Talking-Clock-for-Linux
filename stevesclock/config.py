@@ -172,6 +172,11 @@ class Config:
             self._parser[section] = {}
         self._parser.set(section, key, str(value))
 
+    def unset(self, section, key):
+        """Drop a key, so whatever it overrode applies again."""
+        if self._parser.has_option(section, key):
+            self._parser.remove_option(section, key)
+
     def get_bool(self, section, key):
         return self.get(section, key).strip().lower() in TRUE
 
