@@ -117,6 +117,37 @@ Settings save as you change them, exactly as `@AppStorage` does on the Mac.
 - The alarm has no on/off switch, matching the Mac: it fires at its time every
   day, using whatever the alarm slot resolves to.
 
+## Quiet hours
+
+Quiet mode suppresses automatic announcements between "stop speaking after"
+and "start speaking from"; the alarm ignores it. `quiet.days` says which days
+the window covers, so a 7 pm bedtime on school nights does not have to apply to
+the weekend:
+
+```bash
+steves-clock set quiet.enabled=true
+steves-clock set quiet.stop="07:00 pm"
+steves-clock set quiet.start="06:00 am"
+steves-clock set quiet.days=sun,mon,tue,wed,thu    # school nights only
+```
+
+`quiet.days` accepts `every day` (the default), `weekdays`, `weekends`, `none`,
+or a list of day names. A day can also keep its own hours instead of sharing the
+default:
+
+```bash
+steves-clock set quiet.fri.stop="11:30 pm"
+steves-clock set quiet.sat.stop="01:00 am"
+steves-clock set quiet.sat.start="09:00 am"
+steves-clock set quiet.fri.off=true      # no quiet hours at all on Friday
+```
+
+A window that runs past midnight belongs to the day it opened on, so 7 pm to
+6 am on Sunday keeps the small hours of Monday morning quiet even when Monday's
+own window is different. `steves-clock status` prints the default plus any day
+that differs from it, and the menu's Quiet Mode screen and the window's Quiet
+Mode dialog both edit the default and the day list.
+
 ## Command line
 
 Every button has a command:

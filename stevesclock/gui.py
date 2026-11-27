@@ -14,7 +14,15 @@ import subprocess
 import sys
 
 from . import audio, engine, packs, tts
-from .config import SLOT_LABELS, SLOTS, Config, format_clock, parse_clock
+from .config import (
+    SLOT_LABELS,
+    SLOTS,
+    Config,
+    describe_days,
+    format_clock,
+    parse_clock,
+    parse_days,
+)
 
 _window = None
 
@@ -347,22 +355,48 @@ class SettingsWindow:
         stop_entry.get_accessible().set_name("Stop speaking after")
         start_entry = Gtk.Entry(text=config.get("quiet", "start"))
         start_entry.get_accessible().set_name("Start speaking from")
+        days_entry = Gtk.Entry(text=config.get("quiet", "days"))
+        days_entry.get_accessible().set_name("Quiet hours on")
+        days_entry.get_accessible().set_description(
+            "Every day, weekdays, weekends, none, or days listed as mon,tue,wed."
+        )
 
         box.pack_start(enable, False, False, 0)
         box.pack_start(Gtk.Label(label="Stop speaking after:", xalign=0), False, False, 0)
         box.pack_start(stop_entry, False, False, 0)
         box.pack_start(Gtk.Label(label="Start speaking from:", xalign=0), False, False, 0)
         box.pack_start(start_entry, False, False, 0)
+        box.pack_start(Gtk.Label(label="Quiet hours on:", xalign=0), False, False, 0)
+        box.pack_start(days_entry, False, False, 0)
+        box.pack_start(
+            Gtk.Label(
+                label="every day, weekdays, weekends, none, or a list like mon,tue,wed",
+                xalign=0,
+            ),
+            False,
+            False,
+            0,
+        )
 
         dialog.show_all()
         if dialog.run() == Gtk.ResponseType.OK:
+            days_text = days_entry.get_text().strip() or "every"
+            try:
+                days = parse_days(days_text)
+            except ValueError as error:
+                days = None
+                self.set_status("Quiet days left alone: %s" % error)
+            if days is not None:
+                config.set("quiet", "days", days_text)
             config.set_bool("quiet", "enabled", enable.get_active())
             config.set("quiet", "stop", stop_entry.get_text().strip() or "11:00 pm")
             config.set("quiet", "start", start_entry.get_text().strip() or "08:00 am")
             config.save()
-            self.set_status(
-                "Quiet mode %s" % ("on" if enable.get_active() else "off")
-            )
+            if days is not None:
+                self.set_status(
+                    "Quiet mode %s, %s"
+                    % ("on" if enable.get_active() else "off", describe_days(days))
+                )
         dialog.destroy()
 
     def on_minimise(self, _button):
