@@ -175,7 +175,14 @@ class Menu:
                     describe_days(config.quiet_days()),
                 )
                 if quiet
-                else "off",
+                # Days on their own do nothing: say so, or the summary reads
+                # as if picking them had switched quiet on.
+                else (
+                    "off"
+                    if config.quiet_days() == list(range(7))
+                    else "off (days set to %s; turn it on to use them)"
+                    % describe_days(config.quiet_days())
+                ),
             )
         )
         self.say("  %-30s %s" % ("Output device:", config.device or "system default"))
@@ -466,6 +473,8 @@ class Menu:
             self.say("  Applies to:            %s" % describe_days(config.quiet_days()))
             self.say("  Stop speaking after:   %s" % config.get("quiet", "stop"))
             self.say("  Start speaking from:   %s" % config.get("quiet", "start"))
+            self.say("  (Days pick when the window applies; the two times are the hours")
+            self.say("   used on those days, so changing days leaves the rest as it is.)")
             self.say("  1) Enable           2) Disable")
             self.say("  3) Stop speaking after    4) Start speaking from")
             self.say("  5) Days (every day, weekdays, weekends, or sun,mon,...)")
@@ -499,7 +508,20 @@ class Menu:
                         self.say("Could not read those days: %s" % error)
                         continue
                     config.set("quiet", "days", value.strip())
-                    self.say("Quiet hours now apply to %s" % describe_days(days))
+                    if config.get_bool("quiet", "enabled"):
+                        self.say(
+                            "Quiet hours on %s: %s to %s."
+                            % (
+                                describe_days(days),
+                                config.get("quiet", "stop"),
+                                config.get("quiet", "start"),
+                            )
+                        )
+                    else:
+                        self.say(
+                            "Days saved as %s, but Quiet mode is off - press 1 to turn it on."
+                            % describe_days(days)
+                        )
             elif answer in ("6", ""):
                 return
             else:
