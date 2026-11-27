@@ -145,8 +145,10 @@ steves-clock set quiet.fri.off=true      # no quiet hours at all on Friday
 A window that runs past midnight belongs to the day it opened on, so 7 pm to
 6 am on Sunday keeps the small hours of Monday morning quiet even when Monday's
 own window is different. `steves-clock status` prints the default plus any day
-that differs from it, and the menu's Quiet Mode screen and the window's Quiet
-Mode dialog both edit the default and the day list.
+that differs from it. The menu's Quiet Mode screen edits the default and the day
+list, and its **Day by day** entry (`7`) gives one day its own hours, puts it
+back on the default, or skips it entirely; the window's Quiet Mode dialog edits
+the default and the day list.
 
 ## Command line
 
