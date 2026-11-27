@@ -257,13 +257,25 @@ default, and what `--yes` picks, is to run only inside a desktop session.
 
 ## Updating
 
-Nothing phones home and nothing checks on a timer: the clock asks GitHub only
-when you do.
+The clock asks GitHub for one thing at one moment: when the daemon starts, it
+reads the published version number. If a newer build exists it says so in the
+journal and, when you are at a desktop with `notify-send` available, puts up a
+notification naming the command. Nothing is downloaded until you say so, and
+nothing checks on a timer. To stop even that:
+
+```bash
+steves-clock set general.check_updates=false
+```
 
 ```bash
 steves-clock update --check    # report installed vs published, change nothing
-steves-clock update            # download the current build and reinstall it
+steves-clock update            # ask, then download and reinstall
+steves-clock update --yes      # skip the question (scripts, units)
 ```
+
+`update` asks first and installs nothing unless you answer `y`: a pipe, a
+service or a script counts as "not now", so an unattended run cannot replace the
+programme underneath you.
 
 `update` reads the version from the repository, downloads that branch's
 archive, runs its installer with the prefix this copy already uses (adding the

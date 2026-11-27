@@ -48,6 +48,7 @@ DEFAULTS = {
         "device": "",
         "gap_ms": "30",
         "hour24": "false",
+        "check_updates": "true",
     },
     "voices": {
         "main": "Default",

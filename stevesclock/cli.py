@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import urllib.request
 from pathlib import Path
 
@@ -212,6 +213,50 @@ def _published_version():
     raise ValueError("; ".join(problems))
 
 
+def _confirm(question):
+    """Yes only when somebody can answer; a pipe or systemd means no."""
+    if not _interactive():
+        return False
+    print(question, end=" ", flush=True)
+    try:
+        answer = sys.stdin.readline().strip().lower()
+    except (OSError, ValueError):
+        return False
+    return answer in ("y", "yes")
+
+
+def _announce_update(log):
+    """One look at the published version, when the daemon starts.
+
+    Login is the only moment the clock phones home, and it only reads a version
+    number. Offline or blocked is silence rather than an error: the clock still
+    has a job to do.
+    """
+    try:
+        latest, _source = _published_version()
+    except Exception:
+        return
+    if _version_tuple(latest) <= _version_tuple(VERSION):
+        return
+    log("update available: %s -> %s (run 'steves-clock update')" % (VERSION, latest))
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return
+    if not shutil.which("notify-send"):
+        return
+    try:
+        subprocess.run(
+            [
+                "notify-send",
+                "Steve's Talking Clock",
+                "Version %s is available. Run 'steves-clock update'." % latest,
+            ],
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def _install_prefix():
     """The prefix this copy was installed under, or None for a checkout."""
     for parent in Path(__file__).resolve().parents:
@@ -258,6 +303,14 @@ def cmd_update(config, args):
         print("This copy runs from a source checkout, so update it there:")
         print("  git pull && ./install.sh")
         return 0
+
+    # --force is already an explicit "do it"; anything else gets asked first,
+    # and a pipe or a unit file counts as "not now" rather than a surprise
+    # install in the middle of the night.
+    if not force and not getattr(args, "yes", False):
+        if not _confirm("Install %s into %s now? [y/N]" % (latest, prefix)):
+            print("Nothing was changed. Run 'steves-clock update' again when you want it.")
+            return 0
 
     with tempfile.TemporaryDirectory() as work:
         archive = os.path.join(work, "update.tar.gz")
@@ -315,6 +368,11 @@ def cmd_daemon(config, args):
 
     def announce(target, slot):
         return engine.announce(config, target, slot=slot, log=_log)
+
+    # Once per start, off the main thread so a slow or blocked network never
+    # delays the first announcement.
+    if config.get_bool("general", "check_updates"):
+        threading.Thread(target=_announce_update, args=(_log,), daemon=True).start()
 
     try:
         return schedule.run(config, announce, log=_log)
@@ -495,6 +553,7 @@ def build_parser():
     update = subparsers.add_parser("update", help="check GitHub for a newer version and install it")
     update.add_argument("--check", action="store_true", help="only report whether one exists")
     update.add_argument("--force", action="store_true", help="reinstall the published build regardless")
+    update.add_argument("--yes", action="store_true", help="do not ask before installing")
     update.set_defaults(func=cmd_update)
 
     listing = subparsers.add_parser("list", help="the voice list, with the slots using each entry")
